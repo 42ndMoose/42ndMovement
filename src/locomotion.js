@@ -1,39 +1,10 @@
+
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clamp, damp } from "./utils.js";
 
 const DEFAULT_ROLE = "unused";
 const GENERIC_STRAFE_ROLE = "strafe";
-
-const _rootInverse = new THREE.Matrix4();
-const _objectToRoot = new THREE.Matrix4();
-const _tmpBox = new THREE.Box3();
-const _boundsBox = new THREE.Box3();
-const _quatA = new THREE.Quaternion();
-const _quatB = new THREE.Quaternion();
-
-const NON_LOCOMOTION_KEYWORDS = [
-  "draw",
-  "sheath",
-  "attack",
-  "slash",
-  "block",
-  "casting",
-  "cast",
-  "death",
-  "impact",
-  "kick",
-  "power up",
-  "powerup",
-  "hit",
-  "hurt",
-  "equip",
-  "unequip",
-  "spell",
-  "taunt",
-  "emote",
-  "dance",
-];
 
 export const ROLE_OPTIONS = [
   { value: "unused", label: "Unused" },
@@ -56,22 +27,6 @@ function makeEntryId() {
   return `clip-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
-function niceClipName(name, clipIndex) {
-  const raw = String(name || "").trim();
-  if (!raw) return `clip ${clipIndex + 1}`;
-  return raw;
-}
-
-function buildDisplayName(sourceName, clip, clipIndex, totalClips) {
-  const clipLabel = niceClipName(clip?.name, clipIndex);
-  if (totalClips <= 1 && clipLabel === sourceName) return sourceName;
-  return `${sourceName} • ${clipLabel}`;
-}
-
-function lowerText(...parts) {
-  return parts.filter(Boolean).join(" ").toLowerCase();
-}
-
 function looksLikeRootMotionPosition(trackName) {
   const normalized = String(trackName).toLowerCase();
   if (!normalized.endsWith(".position")) return false;
@@ -79,185 +34,13 @@ function looksLikeRootMotionPosition(trackName) {
     normalized.includes("hips.position") ||
     normalized.includes("pelvis.position") ||
     normalized.includes("root.position") ||
-    normalized.includes("armature.position") ||
-    normalized.includes("mixamorighips.position")
+    normalized.includes("armature.position")
   );
-}
-
-function looksLikeFootBone(name) {
-  const n = String(name).toLowerCase();
-  return n.includes("foot") || n.includes("toe") || n.includes("ankle");
-}
-
-function looksLikeFingerBone(name) {
-  const n = String(name).toLowerCase();
-  return n.includes("finger") || n.includes("thumb") || n.includes("index") || n.includes("middle") || n.includes("ring") || n.includes("pinky");
-}
-
-function findBestRootPositionTrack(clip) {
-  const tracks = clip?.tracks || [];
-
-  for (const track of tracks) {
-    if (looksLikeRootMotionPosition(track.name)) return track;
-  }
-
-  let fallback = null;
-  let bestDepth = Infinity;
-
-  for (const track of tracks) {
-    if (!String(track.name).toLowerCase().endsWith(".position")) continue;
-    const targetName = String(track.name).split(".")[0] || "";
-    if (looksLikeFootBone(targetName) || looksLikeFingerBone(targetName)) continue;
-
-    const depth = targetName.split(/[/:|]/).filter(Boolean).length;
-    if (depth < bestDepth) {
-      bestDepth = depth;
-      fallback = track;
-    }
-  }
-
-  return fallback;
-}
-
-function vectorTrackDelta(track) {
-  const values = track?.values;
-  if (!values || values.length < 6) {
-    return { x: 0, y: 0, z: 0, planarDistance: 0, verticalRange: 0, totalTravel: 0 };
-  }
-
-  const firstX = values[0];
-  const firstY = values[1];
-  const firstZ = values[2];
-  const lastX = values[values.length - 3];
-  const lastY = values[values.length - 2];
-  const lastZ = values[values.length - 1];
-
-  let minY = firstY;
-  let maxY = firstY;
-  let totalTravel = 0;
-
-  for (let i = 3; i < values.length; i += 3) {
-    const x0 = values[i - 3];
-    const y0 = values[i - 2];
-    const z0 = values[i - 1];
-    const x1 = values[i];
-    const y1 = values[i + 1];
-    const z1 = values[i + 2];
-    totalTravel += Math.hypot(x1 - x0, y1 - y0, z1 - z0);
-    if (y1 < minY) minY = y1;
-    if (y1 > maxY) maxY = y1;
-  }
-
-  const dx = lastX - firstX;
-  const dy = lastY - firstY;
-  const dz = lastZ - firstZ;
-
-  return {
-    x: dx,
-    y: dy,
-    z: dz,
-    planarDistance: Math.hypot(dx, dz),
-    verticalRange: maxY - minY,
-    totalTravel,
-  };
-}
-
-function quaternionTrackTravel(track) {
-  const values = track?.values;
-  if (!values || values.length < 8) return 0;
-
-  let totalAngle = 0;
-  for (let i = 4; i < values.length; i += 4) {
-    _quatA.set(values[i - 4], values[i - 3], values[i - 2], values[i - 1]).normalize();
-    _quatB.set(values[i], values[i + 1], values[i + 2], values[i + 3]).normalize();
-    totalAngle += _quatA.angleTo(_quatB);
-  }
-  return totalAngle;
 }
 
 function stripRootMotion(clip) {
   const keptTracks = clip.tracks.filter((track) => !looksLikeRootMotionPosition(track.name));
   return new THREE.AnimationClip(clip.name, clip.duration, keptTracks);
-}
-
-function analyzeClip(clip, sourceName = "") {
-  const duration = Math.max(clip?.duration || 0, 0.0001);
-  const rootTrack = findBestRootPositionTrack(clip);
-  const rootMotion = rootTrack ? vectorTrackDelta(rootTrack) : {
-    x: 0,
-    y: 0,
-    z: 0,
-    planarDistance: 0,
-    verticalRange: 0,
-    totalTravel: 0,
-  };
-
-  let positionTravel = 0;
-  let rotationTravel = 0;
-  let footPositionTravel = 0;
-
-  for (const track of clip?.tracks || []) {
-    const trackName = String(track.name || "");
-    const lower = trackName.toLowerCase();
-
-    if (lower.endsWith(".position")) {
-      const delta = vectorTrackDelta(track);
-      positionTravel += delta.totalTravel;
-      if (looksLikeFootBone(trackName)) {
-        footPositionTravel += delta.totalTravel;
-      }
-    } else if (lower.endsWith(".quaternion")) {
-      rotationTravel += quaternionTrackTravel(track);
-    }
-  }
-
-  const motionEnergy = positionTravel + rotationTravel * 0.3;
-  const rootPlanarSpeed = rootMotion.planarDistance / duration;
-  const labelText = lowerText(sourceName, clip?.name);
-  const explicitNonLocomotion = NON_LOCOMOTION_KEYWORDS.some((keyword) => labelText.includes(keyword));
-  const explicitJump = labelText.includes("jump") || labelText.includes("fall");
-  const explicitIdle = labelText.includes("idle");
-  const explicitCrouch = labelText.includes("crouch") || labelText.includes("crouching");
-  const explicitStrafe = labelText.includes("strafe");
-  const explicitRun = labelText.includes("run");
-  const explicitWalk = labelText.includes("walk");
-  const explicitTurn = labelText.includes("turn");
-
-  const likelyStatic = motionEnergy < 0.12 && rootMotion.planarDistance < 0.02 && rootMotion.verticalRange < 0.05;
-  const likelySetup = duration <= 0.12 && likelyStatic;
-  const likelyIdle = explicitIdle || (!explicitNonLocomotion && duration >= 1.0 && rootPlanarSpeed < 0.08 && motionEnergy < 4.0);
-  const likelyStrafe = explicitStrafe || (rootPlanarSpeed > 0.15 && Math.abs(rootMotion.x) > Math.abs(rootMotion.z) * 1.15);
-  const likelyForward = explicitRun || explicitWalk || (rootPlanarSpeed > 0.15 && Math.abs(rootMotion.z) >= Math.abs(rootMotion.x));
-  const likelyRun = explicitRun || (!explicitWalk && likelyForward && rootPlanarSpeed >= 2.2);
-  const likelyWalk = explicitWalk || (likelyForward && !likelyRun && rootPlanarSpeed >= 0.12);
-  const likelyJump = explicitJump || (rootMotion.verticalRange > 0.18 && duration <= 1.4);
-  const likelyTurn = explicitTurn || (!explicitNonLocomotion && duration <= 1.2 && rootPlanarSpeed < 0.12 && rotationTravel > 2.2 && footPositionTravel < 0.5);
-  const likelyOneShot = !explicitNonLocomotion && !likelyIdle && !likelyForward && !likelyStrafe && !likelyJump && !likelyTurn && duration <= 1.25 && motionEnergy > 0.25;
-
-  return {
-    duration,
-    rootMotion,
-    rootPlanarSpeed,
-    motionEnergy,
-    likelyStatic,
-    likelySetup,
-    likelyIdle,
-    likelyStrafe,
-    likelyForward,
-    likelyRun,
-    likelyWalk,
-    likelyJump,
-    likelyTurn,
-    likelyOneShot,
-    explicitNonLocomotion,
-    explicitCrouch,
-    explicitJump,
-    explicitIdle,
-    explicitStrafe,
-    explicitRun,
-    explicitWalk,
-    explicitTurn,
-  };
 }
 
 function normalizeClip(clip, sourceName) {
@@ -266,87 +49,37 @@ function normalizeClip(clip, sourceName) {
   return stripped;
 }
 
-function inferRolePlan(sourceName, clip, usedRoles) {
-  const info = analyzeClip(clip, sourceName);
-  const labelText = lowerText(sourceName, clip?.name);
+function inferRoleHint(name, usedRoles) {
+  const n = String(name || "").toLowerCase();
 
-  if (info.likelySetup) {
-    return { role: DEFAULT_ROLE, skip: true, skipReason: "likely setup / empty clip", info, autoLabel: "setup / empty" };
-  }
+  if (n.includes("crouch") && n.includes("idle")) return "crouchIdle";
+  if (n.includes("crouch") || n.includes("crouching")) return "crouchMove";
+  if (n.includes("fall")) return "fall";
+  if (n.includes("jump")) return "jump";
 
-  if (info.explicitNonLocomotion || info.likelyOneShot) {
-    return { role: DEFAULT_ROLE, skip: true, skipReason: "non-locomotion clip", info, autoLabel: "non-locomotion" };
-  }
-
-  if (info.explicitCrouch && info.likelyIdle) {
-    return { role: "crouchIdle", skip: false, info, autoLabel: "auto crouch idle" };
-  }
-
-  if (info.explicitCrouch) {
-    return { role: "crouchMove", skip: false, info, autoLabel: "auto crouch move" };
+  if (n.includes("turn left")) return "turnLeft";
+  if (n.includes("turn right")) return "turnRight";
+  if (n.includes("180 turn") || n.includes("turn")) {
+    if (!usedRoles.has("turnLeft")) return "turnLeft";
+    if (!usedRoles.has("turnRight")) return "turnRight";
   }
 
-  if (info.likelyJump) {
-    if (labelText.includes("fall")) {
-      return { role: "fall", skip: false, info, autoLabel: "auto fall" };
-    }
-    return { role: "jump", skip: false, info, autoLabel: "auto jump" };
+  if (n.includes("strafe left")) return "strafeLeft";
+  if (n.includes("strafe right")) return "strafeRight";
+
+  if (n.includes("strafe")) {
+    if (!usedRoles.has("strafeLeft")) return "strafeLeft";
+    if (!usedRoles.has("strafeRight")) return "strafeRight";
+    return GENERIC_STRAFE_ROLE;
   }
 
-  if (info.likelyTurn) {
-    if (!usedRoles.has("turnLeft")) {
-      return { role: "turnLeft", skip: false, info, autoLabel: "auto turn" };
-    }
-    if (!usedRoles.has("turnRight")) {
-      return { role: "turnRight", skip: false, info, autoLabel: "auto turn" };
-    }
-    return { role: DEFAULT_ROLE, skip: false, info, autoLabel: "extra turn" };
+  if (n.includes("run") && !usedRoles.has("run")) return "run";
+  if (n.includes("walk") && !usedRoles.has("walk")) return "walk";
+  if (n.includes("idle") && !n.includes("block") && !n.includes("impact")) {
+    if (!usedRoles.has("idle")) return "idle";
   }
 
-  if (info.likelyIdle) {
-    return { role: "idle", skip: false, info, autoLabel: "auto idle" };
-  }
-
-  if (info.likelyStrafe) {
-    if (labelText.includes("left")) {
-      return { role: "strafeLeft", skip: false, info, autoLabel: "auto strafe left" };
-    }
-    if (labelText.includes("right")) {
-      return { role: "strafeRight", skip: false, info, autoLabel: "auto strafe right" };
-    }
-    if (!usedRoles.has("strafeLeft")) {
-      return { role: "strafeLeft", skip: false, info, autoLabel: "auto strafe variant" };
-    }
-    if (!usedRoles.has("strafeRight")) {
-      return { role: "strafeRight", skip: false, info, autoLabel: "auto strafe variant" };
-    }
-    return { role: GENERIC_STRAFE_ROLE, skip: false, info, autoLabel: "auto generic strafe" };
-  }
-
-  if (info.likelyRun) {
-    return { role: "run", skip: false, info, autoLabel: "auto run" };
-  }
-
-  if (info.likelyWalk) {
-    return { role: "walk", skip: false, info, autoLabel: "auto walk" };
-  }
-
-  if (labelText.includes("idle")) {
-    return { role: "idle", skip: false, info, autoLabel: "auto idle" };
-  }
-  if (labelText.includes("run")) {
-    return { role: "run", skip: false, info, autoLabel: "auto run" };
-  }
-  if (labelText.includes("walk")) {
-    return { role: "walk", skip: false, info, autoLabel: "auto walk" };
-  }
-  if (labelText.includes("strafe")) {
-    if (!usedRoles.has("strafeLeft")) return { role: "strafeLeft", skip: false, info, autoLabel: "auto strafe variant" };
-    if (!usedRoles.has("strafeRight")) return { role: "strafeRight", skip: false, info, autoLabel: "auto strafe variant" };
-    return { role: GENERIC_STRAFE_ROLE, skip: false, info, autoLabel: "auto generic strafe" };
-  }
-
-  return { role: DEFAULT_ROLE, skip: false, info, autoLabel: "manual" };
+  return DEFAULT_ROLE;
 }
 
 function isOneShotRole(role) {
@@ -385,50 +118,6 @@ function buildClipFingerprint(fileKey, clip, clipIndex) {
   ].join("::");
 }
 
-function measureAnimatedRenderableBounds(root, outBox) {
-  if (!root) return false;
-
-  root.updateWorldMatrix(true, true);
-  _rootInverse.copy(root.matrixWorld).invert();
-  outBox.makeEmpty();
-
-  let found = false;
-
-  root.traverse((obj) => {
-    if (!(obj.isMesh || obj.isSkinnedMesh)) return;
-    if (!obj.visible) return;
-
-    let localBounds = null;
-
-    if (obj.isSkinnedMesh) {
-      obj.skeleton?.update?.();
-      obj.computeBoundingBox?.();
-      localBounds = obj.boundingBox || null;
-    } else {
-      if (!obj.geometry?.boundingBox) {
-        obj.geometry?.computeBoundingBox?.();
-      }
-      localBounds = obj.geometry?.boundingBox || null;
-    }
-
-    if (!localBounds) return;
-
-    _objectToRoot.multiplyMatrices(_rootInverse, obj.matrixWorld);
-    _tmpBox.copy(localBounds).applyMatrix4(_objectToRoot);
-
-    if (!Number.isFinite(_tmpBox.min.y) || !Number.isFinite(_tmpBox.max.y)) return;
-
-    if (!found) {
-      outBox.copy(_tmpBox);
-      found = true;
-    } else {
-      outBox.union(_tmpBox);
-    }
-  });
-
-  return found;
-}
-
 export class LocomotionAnimator {
   constructor({ characterRoot, clipListEl, summaryEl, statusEl }) {
     this.characterRoot = characterRoot;
@@ -449,10 +138,6 @@ export class LocomotionAnimator {
 
     this._smoothedWeights = new Map();
     this._lastPose = null;
-    this._skippedEmbeddedCount = 0;
-    this._skippedExternalCount = 0;
-    this._autoGroundWorldOffset = 0;
-    this._autoGroundMaxOffset = 0.85;
 
     this.setCharacterRoot(characterRoot);
   }
@@ -468,17 +153,12 @@ export class LocomotionAnimator {
     this.actions.clear();
     this.previewAction = null;
     this.previewEntryId = null;
-    this._autoGroundWorldOffset = 0;
-    this._applyAutoGroundOffset(0);
     this._rebuildActions();
   }
 
   setEmbeddedClips(clips, sourceName = "character") {
-    const built = this._buildEntriesFromClips(clips || [], sourceName, "embedded");
-    this.embeddedEntries = built.entries;
-    this._skippedEmbeddedCount = built.skippedCount;
-
-    if (!this.embeddedEntries.length && clips?.length && !built.skippedCount) {
+    this.embeddedEntries = this._buildEntriesFromClips(clips || [], sourceName, "embedded");
+    if (!this.embeddedEntries.length && clips?.length) {
       this.embeddedEntries.push({
         id: makeEntryId(),
         source: "embedded",
@@ -489,7 +169,6 @@ export class LocomotionAnimator {
         error: "The file reported animations, but none produced a usable clip.",
       });
     }
-
     this._reconcileEntries();
     this._rebuildActions();
     this._render();
@@ -503,7 +182,6 @@ export class LocomotionAnimator {
     const retainedEntries = this.externalEntries.filter((entry) => !incomingFileKeys.has(entry.fileKey));
 
     const loadedEntries = [];
-    let skippedCount = 0;
     const usedRoles = new Set(
       this.embeddedEntries
         .concat(retainedEntries)
@@ -532,33 +210,23 @@ export class LocomotionAnimator {
 
       for (let clipIndex = 0; clipIndex < clips.length; clipIndex += 1) {
         const clip = clips[clipIndex];
-        const plan = inferRolePlan(file.name, clip, usedRoles);
-        if (plan.skip) {
-          skippedCount += 1;
-          continue;
-        }
-
-        const normalized = normalizeClip(clip, file.name);
-        const displayName = buildDisplayName(file.name, clip, clipIndex, clips.length);
-        const role = plan.role;
-
+        const role = inferRoleHint(file.name, usedRoles);
         if (role !== DEFAULT_ROLE && role !== GENERIC_STRAFE_ROLE) {
           usedRoles.add(role);
         }
 
+        const normalized = normalizeClip(clip, file.name);
         loadedEntries.push({
           id: makeEntryId(),
           source: "external",
           fileKey,
           fingerprint: buildClipFingerprint(fileKey, normalized, clipIndex),
           sourceName: file.name,
-          displayName,
+          displayName: clips.length > 1 && clip.name ? `${file.name} • ${clip.name}` : file.name,
           role,
           clip: normalized,
           error: null,
           targetHint: summarizeTrackTargets(normalized),
-          autoLabel: plan.autoLabel,
-          analysis: plan.info,
         });
       }
     }
@@ -570,7 +238,6 @@ export class LocomotionAnimator {
     }
 
     this.externalEntries = Array.from(dedupedByFingerprint.values());
-    this._skippedExternalCount = skippedCount;
     this._reconcileEntries();
     this._rebuildActions();
     this._render();
@@ -580,18 +247,17 @@ export class LocomotionAnimator {
 
     if (this.statusEl) {
       if (!usable) {
-        this.statusEl.textContent = "No usable locomotion clips were found in the uploaded files. The T-pose is expected in that case.";
+        this.statusEl.textContent = "No usable animation clips were found in the uploaded files. The T-pose is expected in that case.";
       } else if (dead) {
         this.statusEl.textContent = `Loaded ${usable} usable clip(s). ${dead} file(s) had no usable animations.`;
       } else {
-        this.statusEl.textContent = `Loaded ${usable} usable locomotion clip(s). Separate uploads append cleanly, duplicate file re-uploads replace older rows, and likely setup/combat clips are skipped out of the locomotion list.`;
+        this.statusEl.textContent = `Loaded ${usable} usable animation clip(s). Separate uploads now append cleanly and duplicate file re-uploads replace the older entries.`;
       }
     }
   }
 
   clearExternalClips() {
     this.externalEntries = [];
-    this._skippedExternalCount = 0;
     this._reconcileEntries();
     this._rebuildActions();
     this._render();
@@ -603,40 +269,25 @@ export class LocomotionAnimator {
 
   _buildEntriesFromClips(clips, sourceName, source) {
     const usedRoles = new Set();
-    const entries = [];
-    let skippedCount = 0;
-
-    for (let clipIndex = 0; clipIndex < (clips || []).length; clipIndex += 1) {
-      const clip = clips[clipIndex];
-      const plan = inferRolePlan(sourceName, clip, usedRoles);
-
-      if (plan.skip) {
-        skippedCount += 1;
-        continue;
-      }
-
-      const normalized = normalizeClip(clip, sourceName);
-      const role = plan.role;
+    return (clips || []).map((clip, clipIndex) => {
+      const role = inferRoleHint(sourceName, usedRoles);
       if (role !== DEFAULT_ROLE && role !== GENERIC_STRAFE_ROLE) {
         usedRoles.add(role);
       }
 
-      entries.push({
+      const normalized = normalizeClip(clip, sourceName);
+      return {
         id: makeEntryId(),
         source,
         sourceName,
-        displayName: buildDisplayName(sourceName, clip, clipIndex, clips.length),
+        displayName: clips.length > 1 && clip.name ? `${sourceName} • ${clip.name}` : sourceName,
         role,
         clip: normalized,
         error: null,
         targetHint: summarizeTrackTargets(normalized),
-        autoLabel: plan.autoLabel,
-        analysis: plan.info,
         fingerprint: `${source}::${sourceName}::${clip.name || "(unnamed)"}::${clipIndex}`,
-      });
-    }
-
-    return { entries, skippedCount };
+      };
+    });
   }
 
   async _loadGltfFromFile(file) {
@@ -779,14 +430,11 @@ export class LocomotionAnimator {
       const dead = this.entries.filter((entry) => !entry.clip).length;
       const mappedCount = this.entries.filter((entry) => entry.role !== DEFAULT_ROLE && !!entry.clip).length;
       const externalCount = this.externalEntries.length;
-      const skippedCount = this._skippedEmbeddedCount + this._skippedExternalCount;
 
       if (!total) {
-        this.summaryEl.textContent = skippedCount
-          ? `No locomotion rows left after filtering. Skipped likely setup / combat clips: ${skippedCount}.`
-          : "No locomotion clips loaded yet.";
+        this.summaryEl.textContent = "No locomotion clips loaded yet.";
       } else {
-        this.summaryEl.textContent = `Rows: ${total}. External rows: ${externalCount}. Usable clips: ${usable}. Empty/bad files: ${dead}. Mapped roles: ${mappedCount}. Skipped likely setup / combat clips: ${skippedCount}.`;
+        this.summaryEl.textContent = `Rows: ${total}. External rows: ${externalCount}. Usable clips: ${usable}. Empty/bad files: ${dead}. Mapped roles: ${mappedCount}.`;
       }
     }
 
@@ -797,7 +445,7 @@ export class LocomotionAnimator {
     if (!this.entries.length) {
       const empty = document.createElement("div");
       empty.className = "clipEmpty";
-      empty.textContent = "Load your GLB pack here. Separate uploads append instead of stomping the existing list, likely setup/combat clips get filtered out, and every visible row can be removed on the right.";
+      empty.textContent = "Load your GLB pack here. Separate uploads append instead of stomping the existing list, and every row can be removed on the right.";
       this.clipListEl.appendChild(empty);
       return;
     }
@@ -816,10 +464,8 @@ export class LocomotionAnimator {
       const meta = document.createElement("div");
       meta.className = "clipMeta";
       if (entry.clip) {
-        const sourceLabel = entry.source === "embedded" ? "from character" : "external clip";
-        const autoLabel = entry.autoLabel ? ` • ${entry.autoLabel}` : "";
         const targetInfo = entry.targetHint ? ` • tracks: ${entry.targetHint}` : "";
-        meta.textContent = `${sourceLabel} • ${entry.clip.duration.toFixed(2)}s${autoLabel}${targetInfo}`;
+        meta.textContent = `${entry.source === "embedded" ? "from character" : "external clip"} • ${entry.clip.duration.toFixed(2)}s${targetInfo}`;
       } else {
         meta.textContent = entry.error || "No usable animation clip.";
       }
@@ -871,39 +517,12 @@ export class LocomotionAnimator {
     }
   }
 
-  _applyAutoGroundOffset(offsetWorld) {
-    const metrics = this.characterRoot?.userData?.characterMetrics;
-    const visualRoot = this.characterRoot?.userData?.visualRoot;
-    if (!metrics || !visualRoot) return;
-
-    const safeScale = Math.max(0.01, metrics.scale || 1);
-    visualRoot.position.y = metrics.baseCenterOffset + ((metrics.footOffsetWorld || 0) + offsetWorld) / safeScale;
-  }
-
-  _syncAnimatedFooting(dt, pose) {
-    const metrics = this.characterRoot?.userData?.characterMetrics;
-    const visualRoot = this.characterRoot?.userData?.visualRoot;
-    if (!metrics || !visualRoot) return;
-
-    let targetOffsetWorld = 0;
-
-    if (pose?.grounded && measureAnimatedRenderableBounds(this.characterRoot, _boundsBox)) {
-      const safeScale = Math.max(0.01, metrics.scale || 1);
-      targetOffsetWorld = clamp(-_boundsBox.min.y * safeScale, -this._autoGroundMaxOffset, this._autoGroundMaxOffset);
-    }
-
-    const lambda = targetOffsetWorld > this._autoGroundWorldOffset ? 18 : 12;
-    this._autoGroundWorldOffset = damp(this._autoGroundWorldOffset, targetOffsetWorld, lambda, dt);
-    this._applyAutoGroundOffset(this._autoGroundWorldOffset);
-  }
-
   update(dt, pose) {
     if (!this.mixer) return;
     this._lastPose = pose || this._lastPose;
     const currentPose = this._lastPose;
     if (!currentPose) {
       this.mixer.update(dt);
-      this._syncAnimatedFooting(dt, null);
       return;
     }
 
@@ -916,7 +535,6 @@ export class LocomotionAnimator {
       this.previewAction.setEffectiveWeight(1);
       this.previewAction.setEffectiveTimeScale(1);
       this.mixer.update(dt);
-      this._syncAnimatedFooting(dt, currentPose);
       return;
     }
 
@@ -944,7 +562,6 @@ export class LocomotionAnimator {
     }
 
     this.mixer.update(dt);
-    this._syncAnimatedFooting(dt, currentPose);
   }
 
   _computeTargets(pose) {
