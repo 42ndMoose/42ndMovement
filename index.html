@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audio Locomotion Lab</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="hud">
+    <div class="row">
+      <div class="pill">WASD move</div>
+      <div class="pill">Mouse aim</div>
+      <div class="pill">Space jump</div>
+      <div class="pill">Ctrl slide/crouch</div>
+      <div class="pill">Shift sprint (4 stages)</div>
+      <div class="pill">Alt show cursor</div>
+      <div class="pill">Alt+RMB orbit</div>
+      <div class="pill">Scroll zoom</div>
+      <div class="pill">` also unlocks cursor</div>
+    </div>
+
+    <div class="row" id="statusRow">
+      <div class="status" id="status">Click the canvas to lock mouse. Click emitters to play or stop.</div>
+      <div class="status" id="speed">Speed: 0.0</div>
+      <div class="status" id="sprint">Sprint: 0</div>
+      <div class="status" id="mode">Mode: free</div>
+    </div>
+
+    <div class="panel" id="emitterPanel">
+      <div class="panelTitle">Emitters</div>
+      <div class="panelSub">Upload audio per emitter. Emitters now sit on the floor and the sound anchor is pinned to the visible source instead of the group origin.</div>
+      <div id="emitterList"></div>
+    </div>
+
+    <div class="panel" id="surroundPanel">
+      <div class="panelTitle">Shared Track Orbit</div>
+      <div class="panelSub">Optional extra. Upload one song, start it sample-synced across all emitters, and optionally rotate the emitters around the listener for a surround sweep effect.</div>
+      <div class="stackRow">
+        <input id="surroundFile" type="file" accept="audio/*" />
+        <button id="surroundToggle" type="button">Play Shared Track</button>
+      </div>
+      <div class="rangeRow">
+        <label for="surroundOrbit">Orbit</label>
+        <input id="surroundOrbit" type="checkbox" checked />
+      </div>
+      <div class="rangeRow">
+        <label for="surroundRadius">Radius</label>
+        <input id="surroundRadius" type="range" min="2" max="18" step="0.1" value="8" />
+        <span id="surroundRadiusValue">8.0</span>
+      </div>
+      <div class="rangeRow">
+        <label for="surroundSpeed">Orbit Speed</label>
+        <input id="surroundSpeed" type="range" min="-2.5" max="2.5" step="0.01" value="0.55" />
+        <span id="surroundSpeedValue">0.55</span>
+      </div>
+    </div>
+
+    <div class="panel" id="assetPanel">
+      <div class="panelTitle">Character Asset</div>
+      <div class="panelSub">Upload a GLB or GLTF to replace the placeholder. The loader auto-grounds the feet and suggests a usable scale so giant Mixamo exports are testable right away.</div>
+      <input id="charFile" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" />
+      <div class="rangeRow">
+        <label for="modelScale">Scale</label>
+        <input id="modelScale" type="range" min="0.01" max="6" step="0.01" value="1" />
+        <span id="modelScaleValue">1.00x</span>
+      </div>
+      <div class="panelSub" id="charHint">No asset loaded yet. The placeholder capsule stays active until you swap it out.</div>
+    </div>
+  </div>
+
+  <canvas id="c"></canvas>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
