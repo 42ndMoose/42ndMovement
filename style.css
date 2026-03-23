@@ -15,7 +15,8 @@ html, body {
 
 input,
 button,
-label {
+label,
+select {
   user-select: none;
   -webkit-user-select: none;
 }
@@ -34,6 +35,9 @@ label {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .row {
@@ -65,7 +69,7 @@ label {
 
 .panel {
   pointer-events: auto;
-  width: min(560px, calc(100vw - 24px));
+  width: min(620px, calc(100vw - 24px));
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
   background: rgba(0, 0, 0, 0.30);
@@ -86,7 +90,8 @@ label {
   line-height: 1.35;
 }
 
-#emitterList {
+#emitterList,
+#animClipList {
   display: grid;
   grid-template-columns: 1fr;
   gap: 8px;
@@ -108,18 +113,66 @@ label {
   opacity: 0.95;
 }
 
-button {
+.clipRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.clipInfo {
+  min-width: 0;
+}
+
+.clipName {
+  font-size: 12px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.clipMeta,
+.clipEmpty {
+  font-size: 11px;
+  opacity: 0.75;
+  line-height: 1.35;
+}
+
+.clipEmpty {
+  padding: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+button,
+select {
   appearance: none;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(0, 0, 0, 0.25);
   color: #e7e7e7;
   padding: 6px 10px;
   border-radius: 10px;
+}
+
+button {
   cursor: pointer;
 }
 
-button:hover {
+button:hover,
+select:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.clipSelect {
+  width: 100%;
+}
+
+.clipPreviewButton {
+  min-width: 74px;
 }
 
 input[type="file"] {
@@ -159,6 +212,17 @@ input[type="file"] {
 }
 
 #assetPanel,
-#surroundPanel {
-  max-width: 560px;
+#surroundPanel,
+#locomotionPanel {
+  max-width: 620px;
+}
+
+@media (max-width: 720px) {
+  .clipRow {
+    grid-template-columns: 1fr;
+  }
+
+  .stackRow {
+    grid-template-columns: 1fr;
+  }
 }

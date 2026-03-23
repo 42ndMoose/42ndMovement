@@ -13,7 +13,7 @@
       <div class="pill">Mouse aim</div>
       <div class="pill">Space jump</div>
       <div class="pill">Ctrl slide/crouch</div>
-      <div class="pill">Shift sprint (4 stages)</div>
+      <div class="pill">Shift sprint chain</div>
       <div class="pill">Alt show cursor</div>
       <div class="pill">Alt+RMB orbit</div>
       <div class="pill">Scroll zoom</div>
@@ -29,7 +29,7 @@
 
     <div class="panel" id="emitterPanel">
       <div class="panelTitle">Emitters</div>
-      <div class="panelSub">Upload audio per emitter. Emitters now sit on the floor and the sound anchor is pinned to the visible source instead of the group origin.</div>
+      <div class="panelSub">Upload audio per emitter. Emitters sit on the floor and the sound anchor stays pinned to the visible source.</div>
       <div id="emitterList"></div>
     </div>
 
@@ -58,7 +58,7 @@
 
     <div class="panel" id="assetPanel">
       <div class="panelTitle">Character Asset</div>
-      <div class="panelSub">Upload a GLB or GLTF to replace the placeholder. The loader auto-grounds the feet and suggests a usable scale so giant Mixamo exports are testable right away.</div>
+      <div class="panelSub">Upload a GLB or GLTF to replace the placeholder. The loader auto-grounds the feet and suggests a usable scale so big Mixamo exports are testable right away.</div>
       <input id="charFile" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" />
       <div class="rangeRow">
         <label for="modelScale">Scale</label>
@@ -66,6 +66,14 @@
         <span id="modelScaleValue">1.00x</span>
       </div>
       <div class="panelSub" id="charHint">No asset loaded yet. The placeholder capsule stays active until you swap it out.</div>
+    </div>
+
+    <div class="panel" id="locomotionPanel">
+      <div class="panelTitle">Locomotion Pack</div>
+      <div class="panelSub">Load one or many GLB clips from the same rig. This patch strips root motion from hips/root tracks, keeps your current A/D strafe convention, and lets you map clips into locomotion roles without touching code.</div>
+      <input id="animPackFiles" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" multiple />
+      <div class="panelSub" id="animSummary">No locomotion clips loaded yet.</div>
+      <div id="animClipList"></div>
     </div>
   </div>
 

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { ThirdPersonController } from "./controller.js";
 import { AudioEmitterSystem } from "./audioEmitters.js";
+import { LocomotionAnimator } from "./locomotion.js";
 import {
   applyCharacterScale,
   getCharacterMetrics,
@@ -69,14 +70,17 @@ function getGroundHeightAt() {
   return 0.0;
 }
 
+let latestPose = null;
+
 const controller = new ThirdPersonController({
   camera,
   domElement: canvas,
   characterRoot: character,
   getGroundHeightAt,
   hud,
-  onPose: ({ bodyYaw }) => {
-    listener.rotation.set(0, bodyYaw, 0);
+  onPose: (pose) => {
+    latestPose = pose;
+    listener.rotation.set(0, pose.bodyYaw, 0);
   },
 });
 
@@ -85,11 +89,27 @@ const modelScale = document.getElementById("modelScale");
 const modelScaleValue = document.getElementById("modelScaleValue");
 const charHint = document.getElementById("charHint");
 
+const animPackFiles = document.getElementById("animPackFiles");
+const animSummary = document.getElementById("animSummary");
+const animClipList = document.getElementById("animClipList");
+
+const locomotion = new LocomotionAnimator({
+  characterRoot: character,
+  clipListEl: animClipList,
+  summaryEl: animSummary,
+  statusEl: hud.status,
+});
+
 function syncCharacterMetrics(characterRoot) {
   const metrics = getCharacterMetrics(characterRoot);
   listener.position.set(0, metrics.eyeHeight, 0);
   controller.setCharacterMetrics(metrics);
   return metrics;
+}
+
+function syncCharacterAnimations() {
+  locomotion.setCharacterRoot(character);
+  locomotion.setEmbeddedClips(character.userData.animations || [], character.userData.sourceName || "character");
 }
 
 function updateScaleLabel(value) {
@@ -105,6 +125,7 @@ function applyCurrentScaleToCharacter() {
 
 updateScaleLabel(modelScale.value);
 syncCharacterMetrics(character);
+syncCharacterAnimations();
 
 modelScale.addEventListener("input", () => {
   applyCurrentScaleToCharacter();
@@ -126,13 +147,27 @@ charFile.addEventListener("change", async () => {
     const suggestedScale = suggestCharacterScale(character, 1.8);
     modelScale.value = String(suggestedScale);
     applyCurrentScaleToCharacter();
+    syncCharacterAnimations();
 
     const metrics = getCharacterMetrics(character);
     charHint.textContent = `${charFile.files[0].name} loaded. Raw height auto-fitted to ${metrics.height.toFixed(2)} scene units. Use the scale slider to tweak it.`;
-    hud.status.textContent = "Character loaded. Feet are auto-grounded and movement now uses speed-locked steering.";
+    hud.status.textContent = "Character loaded. Movement still uses the repo's strafe convention, and any embedded clips are ready for mapping.";
   } catch (err) {
     console.error(err);
     hud.status.textContent = "Failed to load that model. Try a GLB with embedded buffers and textures.";
+  }
+});
+
+animPackFiles.addEventListener("change", async () => {
+  const files = Array.from(animPackFiles.files || []);
+  if (!files.length) return;
+
+  try {
+    await locomotion.loadExternalClipFiles(files);
+    hud.status.textContent = "Animation pack loaded. Use Preview to identify numbered strafes, then map the roles you want.";
+  } catch (err) {
+    console.error(err);
+    hud.status.textContent = "Failed to load one or more animation clips.";
   }
 });
 
@@ -173,6 +208,7 @@ function tick() {
   centerRing.rotation.z += dt * 0.25;
 
   controller.update(dt);
+  locomotion.update(dt, latestPose);
   emitters.update(dt);
 
   renderer.render(scene, camera);

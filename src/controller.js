@@ -24,6 +24,14 @@ function moveToward(current, target, maxDelta) {
   return current + Math.sign(target - current) * maxDelta;
 }
 
+function inverseYawProjectX(worldX, worldZ, yaw) {
+  return worldX * Math.cos(yaw) - worldZ * Math.sin(yaw);
+}
+
+function inverseYawProjectZ(worldX, worldZ, yaw) {
+  return worldX * Math.sin(yaw) + worldZ * Math.cos(yaw);
+}
+
 export class ThirdPersonController {
   constructor({ camera, domElement, characterRoot, getGroundHeightAt, hud, onPose }) {
     this.camera = camera;
@@ -85,8 +93,12 @@ export class ThirdPersonController {
 
     this.sprintStage = 0;
     this.sprintHeld = false;
+    this.sprintValue = 0;
     this.lastShiftUpAt = -999;
     this.shiftChainWindow = 2.0;
+    this.sprintRiseRate = 9.5;
+    this.sprintDecayBaseRate = 1.8;
+    this.sprintDecayExtraRate = 2.6;
 
     this.grounded = false;
     this.lastGroundedAt = -999;
@@ -270,6 +282,8 @@ export class ThirdPersonController {
       this.keys.clear();
       this.rmbHeld = false;
       this.sprintHeld = false;
+      this.sprintStage = 0;
+      this.sprintValue = 0;
     };
 
     const onVisibility = () => {
@@ -312,6 +326,34 @@ export class ThirdPersonController {
     if (this.sprintStage > 0 && this._timeSinceShiftUp() <= this.shiftChainWindow) return this.sprintStage;
     this.sprintStage = 0;
     return 0;
+  }
+
+  _sampleSprintSpeed(stageValue) {
+    const maxStage = this.sprintSpeeds.length - 1;
+    const clampedStage = clamp(stageValue, 0, maxStage);
+    const lo = Math.floor(clampedStage);
+    const hi = Math.min(maxStage, Math.ceil(clampedStage));
+    const t = clampedStage - lo;
+    return THREE.MathUtils.lerp(this.sprintSpeeds[lo], this.sprintSpeeds[hi], t);
+  }
+
+  _updateSprintValue(dt, stageActive) {
+    let target = 0;
+
+    if (this.sprintHeld) {
+      target = stageActive;
+    } else if (stageActive > 0 && this._timeSinceShiftUp() <= this.shiftChainWindow) {
+      target = Math.max(0, stageActive - 1);
+    }
+
+    if (target >= this.sprintValue) {
+      this.sprintValue = moveToward(this.sprintValue, target, this.sprintRiseRate * dt);
+    } else {
+      const decayRate = this.sprintDecayBaseRate + this.sprintValue * this.sprintDecayExtraRate;
+      this.sprintValue = moveToward(this.sprintValue, target, decayRate * dt);
+    }
+
+    return target;
   }
 
   _isCrouchHeld() {
@@ -375,7 +417,9 @@ export class ThirdPersonController {
     if (hasMove) this.move.normalize();
 
     const crouchHeld = this._isCrouchHeld();
-    const stage = this._sprintStageActive();
+    const stageActive = this._sprintStageActive();
+    this._updateSprintValue(dt, stageActive);
+
     const planarSpeedBefore = Math.hypot(this.vel.x, this.vel.z);
 
     if (this.grounded && crouchHeld && !this.slideActive && planarSpeedBefore >= this.slideEnterSpeed) {
@@ -393,7 +437,7 @@ export class ThirdPersonController {
     }
 
     let baseSpeed = this.walkSpeed;
-    if (stage > 0) baseSpeed = this.sprintSpeeds[stage];
+    if (this.sprintValue > 0.001) baseSpeed = this._sampleSprintSpeed(this.sprintValue);
     if (crouchHeld && !this.slideActive) baseSpeed *= this.crouchSpeedFactor;
 
     if (this.grounded) {
@@ -416,7 +460,14 @@ export class ThirdPersonController {
         const turnRate = this.pointerLocked ? this.turnRateGroundAim : this.turnRateGround;
         this._steerPlanarVelocity(desiredYaw, baseSpeed, turnRate, this.accelGround, this.decelGround, dt);
       } else {
-        this._steerPlanarVelocity(Math.atan2(this.vel.x, this.vel.z || 0.0001), 0, this.turnRateGround, this.accelGround, this.decelGround, dt);
+        this._steerPlanarVelocity(
+          Math.atan2(this.vel.x, this.vel.z || 0.0001),
+          0,
+          this.turnRateGround,
+          this.accelGround,
+          this.decelGround,
+          dt
+        );
       }
     } else {
       const airDecay = Math.exp(-this.airDrag * dt);
@@ -463,6 +514,7 @@ export class ThirdPersonController {
     }
 
     const bodyTurnRate = this.pointerLocked ? this.bodyTurnRateAim : this.bodyTurnRateMove;
+    const prevBodyYaw = this._bodyYaw;
     this._bodyYaw = rotateAngleToward(this._bodyYaw, targetBodyYaw, bodyTurnRate * dt);
     this.characterRoot.rotation.y = this._bodyYaw;
 
@@ -487,15 +539,35 @@ export class ThirdPersonController {
     this.camera.lookAt(_target);
 
     this._syncCharacter();
-    this._updateHud(stage);
+    this._updateHud(stageActive);
 
     if (this.onPose) {
+      const localVelocityX = inverseYawProjectX(this.vel.x, this.vel.z, this._bodyYaw);
+      const localVelocityZ = inverseYawProjectZ(this.vel.x, this.vel.z, this._bodyYaw);
+      const localMoveX = inverseYawProjectX(this.move.x, this.move.z, this._bodyYaw);
+      const localMoveZ = inverseYawProjectZ(this.move.x, this.move.z, this._bodyYaw);
+
       this.onPose({
         position: this.pos,
         bodyYaw: this._bodyYaw,
+        bodyYawDelta: wrapAngle(this._bodyYaw - prevBodyYaw) / Math.max(dt, 0.0001),
         grounded: this.grounded,
         speed: planarSpeed,
         slideActive: this.slideActive,
+        crouchHeld,
+        pointerLocked: this.pointerLocked,
+        sprintStage: stageActive,
+        sprintValue: this.sprintValue,
+        velocityX: this.vel.x,
+        velocityY: this.vel.y,
+        velocityZ: this.vel.z,
+        localVelocityX,
+        localVelocityZ,
+        localMoveX,
+        localMoveZ,
+        moveInputActive: hasMove,
+        walkSpeed: this.walkSpeed,
+        runReferenceSpeed: this.sprintSpeeds[1],
       });
     }
   }
@@ -508,7 +580,7 @@ export class ThirdPersonController {
     if (!this.hud) return;
     const speed = Math.hypot(this.vel.x, this.vel.z);
     this.hud.speed.textContent = `Speed: ${speed.toFixed(1)}`;
-    this.hud.sprint.textContent = `Sprint: ${stageActive}${this.slideActive ? " • slide" : ""}`;
+    this.hud.sprint.textContent = `Sprint: ${stageActive} • carry ${this.sprintValue.toFixed(2)}${this.slideActive ? " • slide" : ""}`;
     this.hud.mode.textContent = `Mode: ${this.pointerLocked ? "aim" : "free"}`;
   }
 }
