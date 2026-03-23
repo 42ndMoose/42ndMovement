@@ -1,4 +1,3 @@
-
 import * as THREE from "three";
 import { ThirdPersonController } from "./controller.js";
 import { AudioEmitterSystem } from "./audioEmitters.js";
@@ -168,7 +167,7 @@ charFile.addEventListener("change", async () => {
     syncCharacterAnimations();
 
     charHint.textContent = `${charFile.files[0].name} loaded. Raw height auto-fitted to ${metrics.height.toFixed(2)} scene units. If this specific model still floats or sinks a bit, use Foot Offset to nudge it without breaking the others.`;
-    hud.status.textContent = "Character loaded. Movement still uses the repo's current strafe convention, and embedded clips are ready for mapping.";
+    hud.status.textContent = "Character loaded. Embedded clips now use clearer labels, short junk clips stay hidden, and the current A/D strafe convention stays untouched.";
   } catch (err) {
     console.error(err);
     hud.status.textContent = "Failed to load that model. Try a GLB with embedded buffers and textures.";
@@ -183,7 +182,7 @@ animPackFiles.addEventListener("change", async () => {
 
   try {
     await locomotion.loadExternalClipFiles(files);
-    hud.status.textContent = "Animation pack loaded. Separate uploads now append cleanly, same-file re-uploads replace older rows, and every row can be removed.";
+    hud.status.textContent = "Animation pack loaded. Separate uploads append cleanly, same-file re-uploads replace older rows, and short junk clips stay hidden.";
   } catch (err) {
     console.error(err);
     hud.status.textContent = "Failed to load one or more animation clips.";

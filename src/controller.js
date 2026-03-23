@@ -1,4 +1,3 @@
-
 import * as THREE from "three";
 import { clamp, damp, nowSec } from "./utils.js";
 
@@ -69,7 +68,7 @@ export class ThirdPersonController {
     this.accelAir = 10.0;
     this.decelGround = 28.0;
     this.airDrag = 1.35;
-    this.airCarryDragFactor = 0.35;
+    this.airCarryDragFactor = 0.12;
     this.friction = 10.5;
     this.slideFriction = 1.45;
     this.slideSteerFactor = 0.28;
@@ -86,13 +85,14 @@ export class ThirdPersonController {
     this.jumpBuffer = 0.15;
     this.coyoteTime = 0.12;
     this.groundSnapDistance = 0.18;
-    this.jumpCarryBoostMax = 1.08;
-    this.jumpCarryDurationMin = 0.05;
-    this.jumpCarryDurationMax = 0.18;
+    this.jumpCarryBoostMax = 1.14;
+    this.jumpCarryDurationMin = 0.09;
+    this.jumpCarryDurationMax = 0.22;
     this.jumpCarryDuration = 0;
     this.jumpCarryTime = 0;
     this.jumpCarryFloorSpeed = 0;
     this.jumpCarryYaw = 0;
+    this.jumpCarryPreserveMinFactor = 0.95;
 
     this.slideEnterSpeed = 8.25;
     this.slideExitSpeed = 5.0;
@@ -509,26 +509,46 @@ export class ThirdPersonController {
       }
     } else {
       const carryActive = this.jumpCarryTime > 0 && this.jumpCarryFloorSpeed > 0.0001;
-      const airDrag = carryActive ? this.airDrag * this.airCarryDragFactor : this.airDrag;
+      const carryAlpha = carryActive
+        ? clamp(this.jumpCarryTime / Math.max(this.jumpCarryDuration, 0.0001), 0, 1)
+        : 0;
+
+      const airDrag = carryActive
+        ? this.airDrag * THREE.MathUtils.lerp(1.0, this.airCarryDragFactor, carryAlpha)
+        : this.airDrag;
+
       const airDecay = Math.exp(-airDrag * dt);
       this.vel.x *= airDecay;
       this.vel.z *= airDecay;
 
       if (hasMove) {
         const desiredYaw = Math.atan2(this.move.x, this.move.z);
-        const desiredSpeed = Math.max(Math.hypot(this.vel.x, this.vel.z), baseSpeed * 0.7);
-        this._steerPlanarVelocity(desiredYaw, desiredSpeed, this.turnRateAir, this.accelAir, this.accelAir, dt);
+        const carryFloorSpeed = carryActive
+          ? this.jumpCarryFloorSpeed * THREE.MathUtils.lerp(this.jumpCarryPreserveMinFactor, 1.0, carryAlpha)
+          : 0;
+
+        const desiredSpeed = carryActive
+          ? Math.max(Math.hypot(this.vel.x, this.vel.z), carryFloorSpeed)
+          : Math.max(Math.hypot(this.vel.x, this.vel.z), baseSpeed * 0.7);
+
+        const airAccel = carryActive ? this.accelAir * 0.75 : this.accelAir;
+        this._steerPlanarVelocity(desiredYaw, desiredSpeed, this.turnRateAir, airAccel, airAccel, dt);
       }
 
       if (carryActive) {
-        const carryT = this.jumpCarryTime / Math.max(this.jumpCarryDuration, 0.0001);
-        const floorSpeed = THREE.MathUtils.lerp(baseSpeed * 0.72, this.jumpCarryFloorSpeed, carryT);
+        const carryFloorSpeed = this.jumpCarryFloorSpeed * THREE.MathUtils.lerp(
+          this.jumpCarryPreserveMinFactor,
+          1.0,
+          carryAlpha
+        );
+
         const currentSpeed = Math.hypot(this.vel.x, this.vel.z);
-        if (currentSpeed < floorSpeed) {
+        if (currentSpeed < carryFloorSpeed) {
           const carryYaw = currentSpeed > 0.0001 ? Math.atan2(this.vel.x, this.vel.z) : this.jumpCarryYaw;
-          this.vel.x = Math.sin(carryYaw) * floorSpeed;
-          this.vel.z = Math.cos(carryYaw) * floorSpeed;
+          this.vel.x = Math.sin(carryYaw) * carryFloorSpeed;
+          this.vel.z = Math.cos(carryYaw) * carryFloorSpeed;
         }
+
         this.jumpCarryTime = Math.max(0, this.jumpCarryTime - dt);
       }
     }

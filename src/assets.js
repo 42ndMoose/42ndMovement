@@ -1,4 +1,3 @@
-
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clamp } from "./utils.js";
@@ -76,12 +75,17 @@ function measureObject(root) {
 
 function syncCharacterPlacement(characterRoot) {
   const metrics = characterRoot?.userData?.characterMetrics;
-  const visualRoot = characterRoot?.userData?.visualRoot;
-  if (!metrics || !visualRoot) return;
+  const visualPivot = characterRoot?.userData?.visualPivot;
+  if (!metrics || !visualPivot) return;
 
   const safeScale = Math.max(0.01, metrics.scale || 1);
   characterRoot.scale.setScalar(safeScale);
-  visualRoot.position.y = metrics.baseCenterOffset + (metrics.footOffsetWorld || 0) / safeScale;
+
+  visualPivot.position.set(
+    0,
+    metrics.baseCenterOffset + (metrics.footOffsetWorld || 0) / safeScale,
+    0
+  );
 }
 
 function makeRigFromVisual(visualRoot, rawHeightHint = null) {
