@@ -167,12 +167,30 @@ select:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
+button:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .clipSelect {
   width: 100%;
 }
 
-.clipPreviewButton {
-  min-width: 74px;
+.clipActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.clipPreviewButton,
+.clipRemoveButton {
+  min-width: 78px;
+}
+
+.clipRemoveButton {
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 input[type="file"] {
@@ -220,6 +238,10 @@ input[type="file"] {
 @media (max-width: 720px) {
   .clipRow {
     grid-template-columns: 1fr;
+  }
+
+  .clipActions {
+    justify-content: flex-start;
   }
 
   .stackRow {

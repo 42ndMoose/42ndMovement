@@ -1,8 +1,10 @@
+
 import * as THREE from "three";
 import { ThirdPersonController } from "./controller.js";
 import { AudioEmitterSystem } from "./audioEmitters.js";
 import { LocomotionAnimator } from "./locomotion.js";
 import {
+  applyCharacterFootOffset,
   applyCharacterScale,
   getCharacterMetrics,
   loadCharacterFromFile,
@@ -87,9 +89,12 @@ const controller = new ThirdPersonController({
 const charFile = document.getElementById("charFile");
 const modelScale = document.getElementById("modelScale");
 const modelScaleValue = document.getElementById("modelScaleValue");
+const modelFootOffset = document.getElementById("modelFootOffset");
+const modelFootOffsetValue = document.getElementById("modelFootOffsetValue");
 const charHint = document.getElementById("charHint");
 
 const animPackFiles = document.getElementById("animPackFiles");
+const clearAnimPack = document.getElementById("clearAnimPack");
 const animSummary = document.getElementById("animSummary");
 const animClipList = document.getElementById("animClipList");
 
@@ -116,19 +121,31 @@ function updateScaleLabel(value) {
   modelScaleValue.textContent = `${Number(value).toFixed(2)}x`;
 }
 
-function applyCurrentScaleToCharacter() {
-  const metrics = applyCharacterScale(character, Number(modelScale.value) || 1);
+function updateFootOffsetLabel(value) {
+  modelFootOffsetValue.textContent = `${Number(value).toFixed(2)}`;
+}
+
+function applyCurrentCharacterTuning() {
+  applyCharacterScale(character, Number(modelScale.value) || 1);
+  const metrics = applyCharacterFootOffset(character, Number(modelFootOffset.value) || 0);
   listener.position.set(0, metrics.eyeHeight, 0);
   controller.setCharacterMetrics(metrics);
   updateScaleLabel(modelScale.value);
+  updateFootOffsetLabel(modelFootOffset.value);
+  return metrics;
 }
 
 updateScaleLabel(modelScale.value);
+updateFootOffsetLabel(modelFootOffset.value);
 syncCharacterMetrics(character);
 syncCharacterAnimations();
 
 modelScale.addEventListener("input", () => {
-  applyCurrentScaleToCharacter();
+  applyCurrentCharacterTuning();
+});
+
+modelFootOffset.addEventListener("input", () => {
+  applyCurrentCharacterTuning();
 });
 
 charFile.addEventListener("change", async () => {
@@ -146,15 +163,17 @@ charFile.addEventListener("change", async () => {
 
     const suggestedScale = suggestCharacterScale(character, 1.8);
     modelScale.value = String(suggestedScale);
-    applyCurrentScaleToCharacter();
+    modelFootOffset.value = "0";
+    const metrics = applyCurrentCharacterTuning();
     syncCharacterAnimations();
 
-    const metrics = getCharacterMetrics(character);
-    charHint.textContent = `${charFile.files[0].name} loaded. Raw height auto-fitted to ${metrics.height.toFixed(2)} scene units. Use the scale slider to tweak it.`;
-    hud.status.textContent = "Character loaded. Movement still uses the repo's strafe convention, and any embedded clips are ready for mapping.";
+    charHint.textContent = `${charFile.files[0].name} loaded. Raw height auto-fitted to ${metrics.height.toFixed(2)} scene units. If this specific model still floats or sinks a bit, use Foot Offset to nudge it without breaking the others.`;
+    hud.status.textContent = "Character loaded. Movement still uses the repo's current strafe convention, and embedded clips are ready for mapping.";
   } catch (err) {
     console.error(err);
     hud.status.textContent = "Failed to load that model. Try a GLB with embedded buffers and textures.";
+  } finally {
+    charFile.value = "";
   }
 });
 
@@ -164,11 +183,17 @@ animPackFiles.addEventListener("change", async () => {
 
   try {
     await locomotion.loadExternalClipFiles(files);
-    hud.status.textContent = "Animation pack loaded. Use Preview to identify numbered strafes, then map the roles you want.";
+    hud.status.textContent = "Animation pack loaded. Separate uploads now append cleanly, same-file re-uploads replace older rows, and every row can be removed.";
   } catch (err) {
     console.error(err);
     hud.status.textContent = "Failed to load one or more animation clips.";
+  } finally {
+    animPackFiles.value = "";
   }
+});
+
+clearAnimPack.addEventListener("click", () => {
+  locomotion.clearExternalClips();
 });
 
 const emitterList = document.getElementById("emitterList");

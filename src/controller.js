@@ -1,9 +1,9 @@
+
 import * as THREE from "three";
 import { clamp, damp, nowSec } from "./utils.js";
 
 const _forward = new THREE.Vector3();
 const _right = new THREE.Vector3();
-const _desired = new THREE.Vector3();
 const _camBack = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
@@ -69,6 +69,7 @@ export class ThirdPersonController {
     this.accelAir = 10.0;
     this.decelGround = 28.0;
     this.airDrag = 1.35;
+    this.airCarryDragFactor = 0.35;
     this.friction = 10.5;
     this.slideFriction = 1.45;
     this.slideSteerFactor = 0.28;
@@ -85,6 +86,13 @@ export class ThirdPersonController {
     this.jumpBuffer = 0.15;
     this.coyoteTime = 0.12;
     this.groundSnapDistance = 0.18;
+    this.jumpCarryBoostMax = 1.08;
+    this.jumpCarryDurationMin = 0.05;
+    this.jumpCarryDurationMax = 0.18;
+    this.jumpCarryDuration = 0;
+    this.jumpCarryTime = 0;
+    this.jumpCarryFloorSpeed = 0;
+    this.jumpCarryYaw = 0;
 
     this.slideEnterSpeed = 8.25;
     this.slideExitSpeed = 5.0;
@@ -284,6 +292,9 @@ export class ThirdPersonController {
       this.sprintHeld = false;
       this.sprintStage = 0;
       this.sprintValue = 0;
+      this.jumpCarryDuration = 0;
+      this.jumpCarryTime = 0;
+      this.jumpCarryFloorSpeed = 0;
     };
 
     const onVisibility = () => {
@@ -365,6 +376,33 @@ export class ThirdPersonController {
     const jumpBuffered = (t - this.lastJumpPressedAt) <= this.jumpBuffer;
     const coyoteActive = this.grounded || (t - this.lastGroundedAt) <= this.coyoteTime;
     if (!jumpBuffered || !coyoteActive) return false;
+
+    const planarSpeed = Math.hypot(this.vel.x, this.vel.z);
+    const sprintAlpha = clamp(
+      this.sprintValue / Math.max(1, this.sprintSpeeds.length - 1),
+      0,
+      1
+    );
+
+    if (planarSpeed > 0.0001) {
+      const launchYaw = Math.atan2(this.vel.x, this.vel.z);
+      const carriedSpeed = planarSpeed * THREE.MathUtils.lerp(1.0, this.jumpCarryBoostMax, sprintAlpha);
+      this.vel.x = Math.sin(launchYaw) * carriedSpeed;
+      this.vel.z = Math.cos(launchYaw) * carriedSpeed;
+      this.jumpCarryYaw = launchYaw;
+      this.jumpCarryFloorSpeed = carriedSpeed;
+      this.jumpCarryDuration = THREE.MathUtils.lerp(
+        this.jumpCarryDurationMin,
+        this.jumpCarryDurationMax,
+        sprintAlpha
+      );
+      this.jumpCarryTime = this.jumpCarryDuration;
+    } else {
+      this.jumpCarryYaw = this._bodyYaw;
+      this.jumpCarryFloorSpeed = 0;
+      this.jumpCarryDuration = 0;
+      this.jumpCarryTime = 0;
+    }
 
     this.lastJumpPressedAt = -999;
     this.grounded = false;
@@ -470,7 +508,9 @@ export class ThirdPersonController {
         );
       }
     } else {
-      const airDecay = Math.exp(-this.airDrag * dt);
+      const carryActive = this.jumpCarryTime > 0 && this.jumpCarryFloorSpeed > 0.0001;
+      const airDrag = carryActive ? this.airDrag * this.airCarryDragFactor : this.airDrag;
+      const airDecay = Math.exp(-airDrag * dt);
       this.vel.x *= airDecay;
       this.vel.z *= airDecay;
 
@@ -478,6 +518,18 @@ export class ThirdPersonController {
         const desiredYaw = Math.atan2(this.move.x, this.move.z);
         const desiredSpeed = Math.max(Math.hypot(this.vel.x, this.vel.z), baseSpeed * 0.7);
         this._steerPlanarVelocity(desiredYaw, desiredSpeed, this.turnRateAir, this.accelAir, this.accelAir, dt);
+      }
+
+      if (carryActive) {
+        const carryT = this.jumpCarryTime / Math.max(this.jumpCarryDuration, 0.0001);
+        const floorSpeed = THREE.MathUtils.lerp(baseSpeed * 0.72, this.jumpCarryFloorSpeed, carryT);
+        const currentSpeed = Math.hypot(this.vel.x, this.vel.z);
+        if (currentSpeed < floorSpeed) {
+          const carryYaw = currentSpeed > 0.0001 ? Math.atan2(this.vel.x, this.vel.z) : this.jumpCarryYaw;
+          this.vel.x = Math.sin(carryYaw) * floorSpeed;
+          this.vel.z = Math.cos(carryYaw) * floorSpeed;
+        }
+        this.jumpCarryTime = Math.max(0, this.jumpCarryTime - dt);
       }
     }
 
@@ -495,6 +547,9 @@ export class ThirdPersonController {
       this.vel.y = 0;
       this.grounded = true;
       this.lastGroundedAt = nowSec();
+      this.jumpCarryDuration = 0;
+      this.jumpCarryTime = 0;
+      this.jumpCarryFloorSpeed = 0;
     } else {
       this.grounded = false;
     }

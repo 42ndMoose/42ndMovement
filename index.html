@@ -65,13 +65,21 @@
         <input id="modelScale" type="range" min="0.01" max="6" step="0.01" value="1" />
         <span id="modelScaleValue">1.00x</span>
       </div>
+      <div class="rangeRow">
+        <label for="modelFootOffset">Foot Offset</label>
+        <input id="modelFootOffset" type="range" min="-0.35" max="0.35" step="0.01" value="0" />
+        <span id="modelFootOffsetValue">0.00</span>
+      </div>
       <div class="panelSub" id="charHint">No asset loaded yet. The placeholder capsule stays active until you swap it out.</div>
     </div>
 
     <div class="panel" id="locomotionPanel">
       <div class="panelTitle">Locomotion Pack</div>
-      <div class="panelSub">Load one or many GLB clips from the same rig. This patch strips root motion from hips/root tracks, keeps your current A/D strafe convention, and lets you map clips into locomotion roles without touching code.</div>
-      <input id="animPackFiles" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" multiple />
+      <div class="panelSub">Load one or many GLB clips from the same rig. Separate uploads now append instead of stomping the list, root motion still gets stripped, your current A/D strafe convention stays untouched, and every row can be removed without touching code.</div>
+      <div class="stackRow">
+        <input id="animPackFiles" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" multiple />
+        <button id="clearAnimPack" type="button">Clear External</button>
+      </div>
       <div class="panelSub" id="animSummary">No locomotion clips loaded yet.</div>
       <div id="animClipList"></div>
     </div>
