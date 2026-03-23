@@ -44,7 +44,7 @@ function stripRootMotion(clip) {
 
 function normalizeClip(clip, sourceName) {
   const stripped = stripRootMotion(clip.clone());
-  stripped.name = sourceName;
+  stripped.name = stripped.name || sourceName;
   return stripped;
 }
 
@@ -85,6 +85,15 @@ function makeTimeScale(speed, referenceSpeed, minScale = 0.85, maxScale = 1.75) 
   return clamp(speed / referenceSpeed, minScale, maxScale);
 }
 
+function summarizeTrackTargets(clip) {
+  const names = new Set();
+  for (const track of clip.tracks || []) {
+    const dot = track.name.indexOf(".");
+    names.add(dot >= 0 ? track.name.slice(0, dot) : track.name);
+  }
+  return Array.from(names).slice(0, 6).join(", ");
+}
+
 export class LocomotionAnimator {
   constructor({ characterRoot, clipListEl, summaryEl, statusEl }) {
     this.characterRoot = characterRoot;
@@ -104,7 +113,6 @@ export class LocomotionAnimator {
     this.availableRoles = ROLE_OPTIONS.filter((role) => role.value !== DEFAULT_ROLE);
 
     this._smoothedWeights = new Map();
-    this._tmpTargets = {};
     this._lastPose = null;
 
     this.setCharacterRoot(characterRoot);
@@ -126,6 +134,17 @@ export class LocomotionAnimator {
 
   setEmbeddedClips(clips, sourceName = "character") {
     this.embeddedEntries = this._buildEntriesFromClips(clips || [], sourceName, "embedded");
+    if (!this.embeddedEntries.length && clips?.length) {
+      this.embeddedEntries.push({
+        id: makeEntryId(),
+        source: "embedded",
+        sourceName,
+        displayName: sourceName,
+        role: DEFAULT_ROLE,
+        clip: null,
+        error: "The file reported animations, but none produced a usable clip.",
+      });
+    }
     this._reconcileEntries();
     this._rebuildActions();
     this._render();
@@ -146,7 +165,19 @@ export class LocomotionAnimator {
     for (const file of list) {
       const gltf = await this._loadGltfFromFile(file);
       const clips = gltf.animations || [];
-      if (!clips.length) continue;
+
+      if (!clips.length) {
+        loadedEntries.push({
+          id: makeEntryId(),
+          source: "external",
+          sourceName: file.name,
+          displayName: file.name,
+          role: DEFAULT_ROLE,
+          clip: null,
+          error: "No animation clips found in this GLB. That usually means the export stripped the animation data.",
+        });
+        continue;
+      }
 
       for (const clip of clips) {
         const role = inferRoleHint(file.name, usedRoles);
@@ -154,13 +185,16 @@ export class LocomotionAnimator {
           usedRoles.add(role);
         }
 
+        const normalized = normalizeClip(clip, file.name);
         loadedEntries.push({
           id: makeEntryId(),
           source: "external",
           sourceName: file.name,
-          displayName: file.name,
+          displayName: clips.length > 1 && clip.name ? `${file.name} • ${clip.name}` : file.name,
           role,
-          clip: normalizeClip(clip, file.name),
+          clip: normalized,
+          error: null,
+          targetHint: summarizeTrackTargets(normalized),
         });
       }
     }
@@ -170,9 +204,17 @@ export class LocomotionAnimator {
     this._rebuildActions();
     this._render();
 
+    const usable = this.entries.filter((entry) => !!entry.clip).length;
+    const dead = this.entries.filter((entry) => !entry.clip).length;
+
     if (this.statusEl) {
-      const mappedCount = this.entries.filter((entry) => entry.role !== DEFAULT_ROLE).length;
-      this.statusEl.textContent = `Loaded ${this.entries.length} animation clips. ${mappedCount} roles are mapped right now.`;
+      if (!usable) {
+        this.statusEl.textContent = "No usable animation clips were found in the uploaded files. The T-pose is expected in that case.";
+      } else if (dead) {
+        this.statusEl.textContent = `Loaded ${usable} usable clip(s). ${dead} file(s) had no usable animations.`;
+      } else {
+        this.statusEl.textContent = `Loaded ${usable} usable animation clip(s). Preview is on the right side of each row.`;
+      }
     }
   }
 
@@ -184,20 +226,22 @@ export class LocomotionAnimator {
         usedRoles.add(role);
       }
 
+      const normalized = normalizeClip(clip, sourceName);
       return {
         id: makeEntryId(),
         source,
         sourceName,
         displayName: sourceName,
         role,
-        clip: normalizeClip(clip, sourceName),
+        clip: normalized,
+        error: null,
+        targetHint: summarizeTrackTargets(normalized),
       };
     });
   }
 
   async _loadGltfFromFile(file) {
     const url = URL.createObjectURL(file);
-
     try {
       return await new Promise((resolve, reject) => {
         this.loader.load(url, resolve, undefined, reject);
@@ -214,7 +258,7 @@ export class LocomotionAnimator {
   _setEntryRole(entryId, nextRole) {
     const safeRole = nextRole || DEFAULT_ROLE;
     const entry = this.entries.find((item) => item.id === entryId);
-    if (!entry) return;
+    if (!entry || !entry.clip) return;
 
     if (safeRole !== DEFAULT_ROLE) {
       for (const other of this.entries) {
@@ -237,7 +281,7 @@ export class LocomotionAnimator {
   }
 
   _getAssignedEntry(role) {
-    return this.entries.find((entry) => entry.role === role) || null;
+    return this.entries.find((entry) => entry.role === role && !!entry.clip) || null;
   }
 
   _configureAction(action, role) {
@@ -290,7 +334,7 @@ export class LocomotionAnimator {
     }
 
     const entry = this.entries.find((item) => item.id === entryId);
-    if (!entry) return;
+    if (!entry?.clip) return;
 
     const action = this.mixer.clipAction(entry.clip, this.characterRoot);
     action.reset();
@@ -306,14 +350,15 @@ export class LocomotionAnimator {
 
   _render() {
     if (this.summaryEl) {
-      const externalCount = this.externalEntries.length;
-      const embeddedCount = this.embeddedEntries.length;
-      const mappedCount = this.entries.filter((entry) => entry.role !== DEFAULT_ROLE).length;
+      const total = this.entries.length;
+      const usable = this.entries.filter((entry) => !!entry.clip).length;
+      const dead = this.entries.filter((entry) => !entry.clip).length;
+      const mappedCount = this.entries.filter((entry) => entry.role !== DEFAULT_ROLE && !!entry.clip).length;
 
-      if (!this.entries.length) {
+      if (!total) {
         this.summaryEl.textContent = "No locomotion clips loaded yet.";
       } else {
-        this.summaryEl.textContent = `Clips ready: ${this.entries.length} total, ${externalCount} external, ${embeddedCount} embedded, ${mappedCount} mapped.`;
+        this.summaryEl.textContent = `Files processed: ${total}. Usable clips: ${usable}. Empty/bad files: ${dead}. Mapped roles: ${mappedCount}.`;
       }
     }
 
@@ -324,7 +369,7 @@ export class LocomotionAnimator {
     if (!this.entries.length) {
       const empty = document.createElement("div");
       empty.className = "clipEmpty";
-      empty.textContent = "Load your GLB pack, then assign the clips you want to use. Unknown numbered strafe files can be tested with Preview before you map them.";
+      empty.textContent = "Load your GLB pack here. Each usable clip gets its own row with a Preview button on the right.";
       this.clipListEl.appendChild(empty);
       return;
     }
@@ -342,13 +387,19 @@ export class LocomotionAnimator {
 
       const meta = document.createElement("div");
       meta.className = "clipMeta";
-      meta.textContent = `${entry.source === "embedded" ? "from character" : "external clip"} • ${entry.clip.duration.toFixed(2)}s`;
+      if (entry.clip) {
+        const targetInfo = entry.targetHint ? ` • tracks: ${entry.targetHint}` : "";
+        meta.textContent = `${entry.source === "embedded" ? "from character" : "external clip"} • ${entry.clip.duration.toFixed(2)}s${targetInfo}`;
+      } else {
+        meta.textContent = entry.error || "No usable animation clip.";
+      }
 
       info.appendChild(name);
       info.appendChild(meta);
 
       const select = document.createElement("select");
       select.className = "clipSelect";
+      select.disabled = !entry.clip;
       for (const optionDef of ROLE_OPTIONS) {
         const option = document.createElement("option");
         option.value = optionDef.value;
@@ -363,7 +414,8 @@ export class LocomotionAnimator {
       const previewButton = document.createElement("button");
       previewButton.type = "button";
       previewButton.className = "clipPreviewButton";
-      previewButton.textContent = this.previewEntryId === entry.id ? "Stop" : "Preview";
+      previewButton.disabled = !entry.clip;
+      previewButton.textContent = !entry.clip ? "No clip" : (this.previewEntryId === entry.id ? "Stop" : "Preview");
       previewButton.addEventListener("click", () => {
         this._setPreviewEntry(entry.id);
       });
