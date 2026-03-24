@@ -12,8 +12,12 @@ import {
 } from "./assets.js";
 
 const canvas = document.getElementById("c");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: true,
+  powerPreference: "high-performance",
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -29,7 +33,7 @@ scene.add(hemi);
 const dir = new THREE.DirectionalLight(0xffffff, 1.0);
 dir.position.set(20, 40, 20);
 dir.castShadow = true;
-dir.shadow.mapSize.set(2048, 2048);
+dir.shadow.mapSize.set(1024, 1024);
 dir.shadow.camera.left = -80;
 dir.shadow.camera.right = 80;
 dir.shadow.camera.top = 80;
@@ -47,7 +51,7 @@ const grid = new THREE.GridHelper(1200, 120, 0x1f2937, 0x111827);
 grid.position.y = 0.01;
 scene.add(grid);
 
-const centerGeo = new THREE.TorusGeometry(6, 0.05, 10, 160);
+const centerGeo = new THREE.TorusGeometry(6, 0.05, 10, 96);
 const centerMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.95, metalness: 0.0 });
 const centerRing = new THREE.Mesh(centerGeo, centerMat);
 centerRing.rotation.x = Math.PI / 2;
@@ -213,15 +217,30 @@ const emitters = new AudioEmitterSystem({
 });
 emitters.createEmitters();
 
-function resize() {
+let lastWidth = 0;
+let lastHeight = 0;
+let lastPixelRatio = 0;
+
+function resize(force = false) {
   const w = window.innerWidth;
   const h = window.innerHeight;
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
+
+  if (!force && w === lastWidth && h === lastHeight && pixelRatio === lastPixelRatio) {
+    return;
+  }
+
+  lastWidth = w;
+  lastHeight = h;
+  lastPixelRatio = pixelRatio;
+
+  renderer.setPixelRatio(pixelRatio);
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
-window.addEventListener("resize", resize);
-resize();
+window.addEventListener("resize", () => resize());
+resize(true);
 
 let last = performance.now();
 function tick() {

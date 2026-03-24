@@ -69,6 +69,7 @@ export class ThirdPersonController {
     this.decelGround = 28.0;
     this.airDrag = 1.35;
     this.airCarryDragFactor = 0.12;
+    this.airCarryAlignedDragFactor = 0.02;
     this.friction = 10.5;
     this.slideFriction = 1.45;
     this.slideSteerFactor = 0.28;
@@ -92,7 +93,9 @@ export class ThirdPersonController {
     this.jumpCarryTime = 0;
     this.jumpCarryFloorSpeed = 0;
     this.jumpCarryYaw = 0;
+    this.jumpCarryVector = new THREE.Vector2(0, 1);
     this.jumpCarryPreserveMinFactor = 0.95;
+    this.jumpCarrySameDirectionDot = 0.92;
 
     this.slideEnterSpeed = 8.25;
     this.slideExitSpeed = 5.0;
@@ -295,6 +298,7 @@ export class ThirdPersonController {
       this.jumpCarryDuration = 0;
       this.jumpCarryTime = 0;
       this.jumpCarryFloorSpeed = 0;
+      this.jumpCarryVector.set(0, 1);
     };
 
     const onVisibility = () => {
@@ -371,25 +375,35 @@ export class ThirdPersonController {
     return this.keys.has("KeyC") || this.keys.has("ControlLeft") || this.keys.has("ControlRight");
   }
 
-  _consumeBufferedJump() {
+  _consumeBufferedJump(launchContext = null) {
     const t = nowSec();
     const jumpBuffered = (t - this.lastJumpPressedAt) <= this.jumpBuffer;
     const coyoteActive = this.grounded || (t - this.lastGroundedAt) <= this.coyoteTime;
     if (!jumpBuffered || !coyoteActive) return false;
 
-    const planarSpeed = Math.hypot(this.vel.x, this.vel.z);
+    const currentPlanarSpeed = Math.hypot(this.vel.x, this.vel.z);
+    const frameStartPlanarSpeed = launchContext?.planarSpeedAtFrameStart || 0;
+    const launchSpeedSource = Math.max(currentPlanarSpeed, frameStartPlanarSpeed);
+
     const sprintAlpha = clamp(
       this.sprintValue / Math.max(1, this.sprintSpeeds.length - 1),
       0,
       1
     );
 
-    if (planarSpeed > 0.0001) {
-      const launchYaw = Math.atan2(this.vel.x, this.vel.z);
-      const carriedSpeed = planarSpeed * THREE.MathUtils.lerp(1.0, this.jumpCarryBoostMax, sprintAlpha);
+    const currentYaw = currentPlanarSpeed > 0.0001 ? Math.atan2(this.vel.x, this.vel.z) : null;
+    const frameStartYaw = Number.isFinite(launchContext?.planarYawAtFrameStart)
+      ? launchContext.planarYawAtFrameStart
+      : null;
+    const inputYaw = launchContext?.hasMove ? Math.atan2(this.move.x, this.move.z) : null;
+    const launchYaw = currentYaw ?? frameStartYaw ?? inputYaw ?? this._bodyYaw;
+
+    if (launchSpeedSource > 0.0001) {
+      const carriedSpeed = launchSpeedSource * THREE.MathUtils.lerp(1.0, this.jumpCarryBoostMax, sprintAlpha);
       this.vel.x = Math.sin(launchYaw) * carriedSpeed;
       this.vel.z = Math.cos(launchYaw) * carriedSpeed;
       this.jumpCarryYaw = launchYaw;
+      this.jumpCarryVector.set(Math.sin(launchYaw), Math.cos(launchYaw));
       this.jumpCarryFloorSpeed = carriedSpeed;
       this.jumpCarryDuration = THREE.MathUtils.lerp(
         this.jumpCarryDurationMin,
@@ -399,6 +413,7 @@ export class ThirdPersonController {
       this.jumpCarryTime = this.jumpCarryDuration;
     } else {
       this.jumpCarryYaw = this._bodyYaw;
+      this.jumpCarryVector.set(Math.sin(this._bodyYaw), Math.cos(this._bodyYaw));
       this.jumpCarryFloorSpeed = 0;
       this.jumpCarryDuration = 0;
       this.jumpCarryTime = 0;
@@ -458,7 +473,12 @@ export class ThirdPersonController {
     const stageActive = this._sprintStageActive();
     this._updateSprintValue(dt, stageActive);
 
-    const planarSpeedBefore = Math.hypot(this.vel.x, this.vel.z);
+    const planarSpeedAtFrameStart = Math.hypot(this.vel.x, this.vel.z);
+    const planarYawAtFrameStart = planarSpeedAtFrameStart > 0.0001
+      ? Math.atan2(this.vel.x, this.vel.z)
+      : this._bodyYaw;
+
+    const planarSpeedBefore = planarSpeedAtFrameStart;
 
     if (this.grounded && crouchHeld && !this.slideActive && planarSpeedBefore >= this.slideEnterSpeed) {
       this.slideActive = true;
@@ -513,20 +533,39 @@ export class ThirdPersonController {
         ? clamp(this.jumpCarryTime / Math.max(this.jumpCarryDuration, 0.0001), 0, 1)
         : 0;
 
+      const carryDirX = this.jumpCarryVector.x;
+      const carryDirZ = this.jumpCarryVector.y;
+      const sameCarryDirection = carryActive && (
+        !hasMove ||
+        (this.move.x * carryDirX + this.move.z * carryDirZ) >= this.jumpCarrySameDirectionDot
+      );
+
+      const carryDragFactor = sameCarryDirection
+        ? this.airCarryAlignedDragFactor
+        : this.airCarryDragFactor;
+
       const airDrag = carryActive
-        ? this.airDrag * THREE.MathUtils.lerp(1.0, this.airCarryDragFactor, carryAlpha)
+        ? this.airDrag * THREE.MathUtils.lerp(1.0, carryDragFactor, carryAlpha)
         : this.airDrag;
 
       const airDecay = Math.exp(-airDrag * dt);
       this.vel.x *= airDecay;
       this.vel.z *= airDecay;
 
-      if (hasMove) {
-        const desiredYaw = Math.atan2(this.move.x, this.move.z);
-        const carryFloorSpeed = carryActive
-          ? this.jumpCarryFloorSpeed * THREE.MathUtils.lerp(this.jumpCarryPreserveMinFactor, 1.0, carryAlpha)
-          : 0;
+      const carryFloorSpeed = carryActive
+        ? this.jumpCarryFloorSpeed * THREE.MathUtils.lerp(
+            this.jumpCarryPreserveMinFactor,
+            1.0,
+            carryAlpha
+          )
+        : 0;
 
+      if (sameCarryDirection) {
+        const preservedSpeed = Math.max(Math.hypot(this.vel.x, this.vel.z), carryFloorSpeed);
+        this.vel.x = carryDirX * preservedSpeed;
+        this.vel.z = carryDirZ * preservedSpeed;
+      } else if (hasMove) {
+        const desiredYaw = Math.atan2(this.move.x, this.move.z);
         const desiredSpeed = carryActive
           ? Math.max(Math.hypot(this.vel.x, this.vel.z), carryFloorSpeed)
           : Math.max(Math.hypot(this.vel.x, this.vel.z), baseSpeed * 0.7);
@@ -536,24 +575,21 @@ export class ThirdPersonController {
       }
 
       if (carryActive) {
-        const carryFloorSpeed = this.jumpCarryFloorSpeed * THREE.MathUtils.lerp(
-          this.jumpCarryPreserveMinFactor,
-          1.0,
-          carryAlpha
-        );
-
         const currentSpeed = Math.hypot(this.vel.x, this.vel.z);
         if (currentSpeed < carryFloorSpeed) {
-          const carryYaw = currentSpeed > 0.0001 ? Math.atan2(this.vel.x, this.vel.z) : this.jumpCarryYaw;
-          this.vel.x = Math.sin(carryYaw) * carryFloorSpeed;
-          this.vel.z = Math.cos(carryYaw) * carryFloorSpeed;
+          this.vel.x = carryDirX * carryFloorSpeed;
+          this.vel.z = carryDirZ * carryFloorSpeed;
         }
 
         this.jumpCarryTime = Math.max(0, this.jumpCarryTime - dt);
       }
     }
 
-    this._consumeBufferedJump();
+    this._consumeBufferedJump({
+      hasMove,
+      planarSpeedAtFrameStart,
+      planarYawAtFrameStart,
+    });
 
     this.vel.y -= this.gravity * dt;
     this.pos.addScaledVector(this.vel, dt);
@@ -570,6 +606,7 @@ export class ThirdPersonController {
       this.jumpCarryDuration = 0;
       this.jumpCarryTime = 0;
       this.jumpCarryFloorSpeed = 0;
+      this.jumpCarryVector.set(0, 1);
     } else {
       this.grounded = false;
     }

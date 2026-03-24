@@ -12,6 +12,9 @@ export class AudioEmitterSystem {
 
     this.raycaster = new THREE.Raycaster();
     this.mouseNDC = new THREE.Vector2();
+    this._listenerWorld = new THREE.Vector3();
+    this._analyserAccum = 0;
+    this._analyserStep = 1 / 30;
 
     this.emitters = [];
 
@@ -121,6 +124,7 @@ export class AudioEmitterSystem {
       oscNode: osc,
       nodeGain: gain,
       fileSource: null,
+      visualLevel: 0,
       _ui: null,
     };
   }
@@ -234,15 +238,14 @@ export class AudioEmitterSystem {
   update(dt) {
     if (this.sharedTrack.playing && this.sharedTrack.orbitEnabled) {
       this.sharedTrack.orbitPhase += dt * this.sharedTrack.orbitSpeed;
-      const listenerWorld = new THREE.Vector3();
-      this.listener.getWorldPosition(listenerWorld);
+      this.listener.getWorldPosition(this._listenerWorld);
 
       for (const emitter of this.emitters) {
         const angle = emitter.orbitAngle + this.sharedTrack.orbitPhase;
         emitter.group.position.set(
-          listenerWorld.x + Math.cos(angle) * this.sharedTrack.orbitRadius,
+          this._listenerWorld.x + Math.cos(angle) * this.sharedTrack.orbitRadius,
           0,
-          listenerWorld.z + Math.sin(angle) * this.sharedTrack.orbitRadius,
+          this._listenerWorld.z + Math.sin(angle) * this.sharedTrack.orbitRadius,
         );
       }
     } else {
@@ -251,12 +254,23 @@ export class AudioEmitterSystem {
       }
     }
 
-    for (const emitter of this.emitters) {
-      const data = emitter.analyser.getFrequencyData();
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) sum += data[i];
-      const avg = sum / (data.length * 255);
+    this._analyserAccum += dt;
+    const shouldSample = this._analyserAccum >= this._analyserStep;
+    if (shouldSample) {
+      this._analyserAccum %= this._analyserStep;
+    }
 
+    for (const emitter of this.emitters) {
+      if (shouldSample && emitter.playing) {
+        const data = emitter.analyser.getFrequencyData();
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) sum += data[i];
+        emitter.visualLevel = sum / (data.length * 255);
+      } else if (!emitter.playing) {
+        emitter.visualLevel = Math.max(0, emitter.visualLevel - dt * 2.4);
+      }
+
+      const avg = emitter.visualLevel;
       const height = 0.2 + avg * 3.0;
       emitter.viz.scale.y = height;
       emitter.viz.position.y = 0.45 + height * 0.5;
@@ -264,7 +278,9 @@ export class AudioEmitterSystem {
       const ringScale = 1.0 + avg * 0.5;
       emitter.ring.scale.set(ringScale, ringScale, ringScale);
 
-      if (emitter.playing) emitter.ring.rotation.z += dt * (0.6 + avg * 1.2);
+      if (emitter.playing) {
+        emitter.ring.rotation.z += dt * (0.6 + avg * 1.2);
+      }
     }
   }
 
